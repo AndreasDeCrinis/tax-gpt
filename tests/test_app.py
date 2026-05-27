@@ -49,6 +49,96 @@ def test_create_2026_year_and_add_manual_entry(client, app):
         assert entry.deductible_amount == Decimal("720.00")
 
 
+def test_added_entries_roll_up_to_correct_finanzonline_kennzahl(client, app):
+    register_and_login(client)
+    with app.app_context():
+        tax_year = TaxYear.query.filter_by(year=2025).one()
+        tax_year_id = tax_year.id
+
+    client.post(
+        f"/years/{tax_year_id}/entries",
+        data={
+            "category": "computer",
+            "amount": "1200",
+            "deductible_percent": "60",
+            "description": "Laptop beruflicher Anteil",
+        },
+        follow_redirects=True,
+    )
+    client.post(
+        f"/years/{tax_year_id}/entries",
+        data={
+            "category": "family_home_trips",
+            "amount": "300",
+            "deductible_percent": "100",
+            "description": "Familienheimfahrten",
+        },
+        follow_redirects=True,
+    )
+    client.post(
+        f"/years/{tax_year_id}/entries",
+        data={
+            "category": "double_household",
+            "amount": "500",
+            "deductible_percent": "50",
+            "description": "Doppelte Haushaltsführung",
+        },
+        follow_redirects=True,
+    )
+
+    response = client.get(f"/years/{tax_year_id}/summary")
+
+    assert b"169" in response.data
+    assert b"720.00" in response.data
+    assert b"300" in response.data
+    assert b"300.00" in response.data
+    assert b"723" in response.data
+    assert b"250.00" in response.data
+
+
+def test_existing_entry_can_be_modified_to_another_kennzahl(client, app):
+    register_and_login(client)
+    with app.app_context():
+        tax_year = TaxYear.query.filter_by(year=2025).one()
+        tax_year_id = tax_year.id
+
+    client.post(
+        f"/years/{tax_year_id}/entries",
+        data={
+            "category": "computer",
+            "amount": "1000",
+            "deductible_percent": "100",
+            "description": "Computer",
+        },
+        follow_redirects=True,
+    )
+
+    with app.app_context():
+        entry_id = TaxEntry.query.one().id
+
+    client.post(
+        f"/entries/{entry_id}",
+        data={
+            "category": "training",
+            "amount": "500",
+            "deductible_percent": "50",
+            "description": "Kurs",
+        },
+        follow_redirects=True,
+    )
+
+    response = client.get(f"/years/{tax_year_id}/summary")
+
+    assert b"722" in response.data
+    assert b"250.00" in response.data
+    assert b"1000.00" not in response.data
+
+    with app.app_context():
+        entry = db.session.get(TaxEntry, entry_id)
+        assert entry.category == "training"
+        assert entry.deductible_amount == Decimal("250.00")
+
+
 def test_checklist_adds_only_filled_items(client, app):
     register_and_login(client)
     with app.app_context():
@@ -72,6 +162,50 @@ def test_checklist_adds_only_filled_items(client, app):
         entries = TaxEntry.query.all()
         assert len(entries) == 1
         assert entries[0].category == "training"
+
+
+def test_finanzonline_fields_are_saved_grouped_and_preserved(client, app):
+    register_and_login(client)
+    with app.app_context():
+        tax_year = TaxYear.query.filter_by(year=2025).one()
+        tax_year_id = tax_year.id
+
+    dashboard = client.get(f"/years/{tax_year_id}")
+    assert "Kennzahl 169".encode() in dashboard.data
+    assert "Pendlerpauschale / Pendlereuro".encode() in dashboard.data
+    assert b'name="fo_169"' in dashboard.data
+    assert b"readonly" in dashboard.data
+
+    response = client.post(
+        f"/years/{tax_year_id}/finanzonline",
+        data={
+            "fo_718": "1234.00",
+            "fo_916": "91.60",
+            "fo_occupation": "Technischer Angestellter",
+            "fo_169": "839.41",
+            "fo_722": "774.12",
+        },
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert "FinanzOnline-Kennzahlen gespeichert.".encode() in response.data
+
+    summary = client.get(f"/years/{tax_year_id}/summary")
+    assert b"839.41" not in summary.data
+    assert "Technischer Angestellter".encode() in summary.data
+
+    client.post(
+        f"/years/{tax_year_id}/settings",
+        data={"filing_kind": "arbeitnehmerveranlagung", "tax_number": "12 345/6789"},
+        follow_redirects=True,
+    )
+
+    with app.app_context():
+        facts = db.session.get(TaxYear, tax_year_id).facts
+        assert facts["tax_number"] == "12 345/6789"
+        assert facts["finanzonline_fields"]["fo_occupation"] == "Technischer Angestellter"
+        assert "fo_169" not in facts["finanzonline_fields"]
 
 
 def test_summary_groups_entries_by_finanzonline_section(app):

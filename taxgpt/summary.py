@@ -4,6 +4,7 @@ from collections import defaultdict
 from decimal import Decimal
 from typing import Any
 
+from .finanzonline import category_display_label, kennzahl_for_category
 from .models import TaxEntry, TaxYear
 from .taxonomy import GROUP_LABELS, get_category
 
@@ -56,7 +57,8 @@ def _entry_row(entry: TaxEntry, deductible_amount: Decimal) -> dict[str, Any]:
     category = get_category(entry.category)
     return {
         "id": entry.id,
-        "category": category.label,
+        "category": category_display_label(entry.category, category.label),
+        "kennzahl": kennzahl_for_category(entry.category),
         "hint": category.hint,
         "amount": entry.amount.quantize(Decimal("0.01")),
         "deductible_percent": entry.deductible_percent,

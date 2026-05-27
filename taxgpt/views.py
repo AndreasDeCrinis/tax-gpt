@@ -28,6 +28,18 @@ from sqlalchemy.exc import IntegrityError
 from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
 
+from .finanzonline import (
+    FINANZONLINE_FIELD_BY_KEY,
+    FINANZONLINE_SECTIONS,
+    build_finanzonline_entry_totals,
+    build_finanzonline_transfer_values,
+    build_finanzonline_value_sources,
+    category_display_label,
+    finanzonline_values,
+    format_money,
+    kennzahl_for_category,
+    normalise_money,
+)
 from .models import Document, TaxEntry, TaxYear, User, db
 from .services.ollama import analyze_document
 from .summary import build_finanzonline_summary
@@ -63,6 +75,10 @@ DOCUMENT_STATUS_LABELS = {
 }
 
 CATEGORY_LABELS = {code: category.label for code, category in CATEGORY_BY_CODE.items()}
+CATEGORY_DISPLAY_LABELS = {
+    code: category_display_label(code, category.label) for code, category in CATEGORY_BY_CODE.items()
+}
+CATEGORY_KENNZAHL_LABELS = {code: kennzahl_for_category(code) for code in CATEGORY_BY_CODE}
 
 
 @bp.before_app_request
@@ -90,6 +106,8 @@ def inject_globals() -> dict[str, Any]:
         "document_status_labels": DOCUMENT_STATUS_LABELS,
         "fact_labels": FACT_LABELS,
         "category_labels": CATEGORY_LABELS,
+        "category_display_labels": CATEGORY_DISPLAY_LABELS,
+        "category_kennzahl_labels": CATEGORY_KENNZAHL_LABELS,
     }
 
 
@@ -192,6 +210,11 @@ def year_dashboard(tax_year_id: int) -> str:
         categories=categories_for_select(),
         questions=deduction_questions(),
         fact_fields=FACT_FIELDS,
+        finanzonline_sections=FINANZONLINE_SECTIONS,
+        finanzonline_values=finanzonline_values(tax_year),
+        finanzonline_entry_totals=build_finanzonline_entry_totals(tax_year),
+        finanzonline_transfer_values=build_finanzonline_transfer_values(tax_year),
+        finanzonline_value_sources=build_finanzonline_value_sources(tax_year),
         summary=summary,
     )
 
@@ -200,7 +223,7 @@ def year_dashboard(tax_year_id: int) -> str:
 @login_required
 def update_settings(tax_year_id: int) -> Response:
     tax_year = _owned_tax_year(tax_year_id)
-    facts: dict[str, Any] = {}
+    facts = tax_year.facts
     for field in FACT_FIELDS:
         name = field["name"]
         if field["type"] == "checkbox":
@@ -217,27 +240,54 @@ def update_settings(tax_year_id: int) -> Response:
     return redirect(url_for("web.year_dashboard", tax_year_id=tax_year.id))
 
 
+@bp.post("/years/<int:tax_year_id>/finanzonline")
+@login_required
+def update_finanzonline_fields(tax_year_id: int) -> Response:
+    tax_year = _owned_tax_year(tax_year_id)
+    entry_totals = build_finanzonline_entry_totals(tax_year)
+    values: dict[str, str] = {}
+    for key, field in FINANZONLINE_FIELD_BY_KEY.items():
+        if field.input_type == "money" and field.linked_categories:
+            continue
+        value = request.form.get(key, "").strip()
+        if not value:
+            continue
+        if field.input_type == "money":
+            normalised_value = normalise_money(value)
+            if key in entry_totals and normalised_value == format_money(entry_totals[key]):
+                continue
+            values[key] = normalised_value
+        else:
+            values[key] = value
+
+    facts = tax_year.facts
+    facts["finanzonline_fields"] = values
+    tax_year.set_facts(facts)
+    db.session.commit()
+    flash("FinanzOnline-Kennzahlen gespeichert.", "success")
+    return redirect(url_for("web.year_dashboard", tax_year_id=tax_year.id))
+
+
 @bp.post("/years/<int:tax_year_id>/entries")
 @login_required
 def add_entry(tax_year_id: int) -> Response:
     tax_year = _owned_tax_year(tax_year_id)
-    category_code = request.form.get("category", "")
-    category = get_category(category_code)
-    entry = TaxEntry(
-        tax_year_id=tax_year.id,
-        group=category.group,
-        category=category.code,
-        label=category.label,
-        amount=_decimal_form("amount"),
-        deductible_percent=_decimal_form("deductible_percent", Decimal(str(category.default_deductible_percent))),
-        paid_on=_date_form("paid_on"),
-        vendor=request.form.get("vendor", "").strip(),
-        description=request.form.get("description", "").strip(),
-    )
+    entry = TaxEntry(tax_year_id=tax_year.id)
+    _apply_entry_form(entry)
     db.session.add(entry)
     db.session.commit()
     flash("Eintrag hinzugefügt.", "success")
     return redirect(url_for("web.year_dashboard", tax_year_id=tax_year.id))
+
+
+@bp.post("/entries/<int:entry_id>")
+@login_required
+def update_entry(entry_id: int) -> Response:
+    entry = TaxEntry.query.join(TaxYear).filter(TaxEntry.id == entry_id, TaxYear.user_id == g.user.id).first_or_404()
+    _apply_entry_form(entry)
+    db.session.commit()
+    flash("Eintrag aktualisiert.", "success")
+    return redirect(url_for("web.year_dashboard", tax_year_id=entry.tax_year_id))
 
 
 @bp.post("/years/<int:tax_year_id>/checklist")
@@ -341,7 +391,16 @@ def apply_document_suggestion(document_id: int) -> Response:
 @login_required
 def summary(tax_year_id: int) -> str:
     tax_year = _owned_tax_year(tax_year_id)
-    return render_template("summary.html", tax_year=tax_year, summary=build_finanzonline_summary(tax_year))
+    return render_template(
+        "summary.html",
+        tax_year=tax_year,
+        summary=build_finanzonline_summary(tax_year),
+        finanzonline_sections=FINANZONLINE_SECTIONS,
+        finanzonline_values=finanzonline_values(tax_year),
+        finanzonline_entry_totals=build_finanzonline_entry_totals(tax_year),
+        finanzonline_transfer_values=build_finanzonline_transfer_values(tax_year),
+        finanzonline_value_sources=build_finanzonline_value_sources(tax_year),
+    )
 
 
 @bp.get("/years/<int:tax_year_id>/export.csv")
@@ -363,6 +422,26 @@ def export_csv(tax_year_id: int) -> Response:
             "description",
         ]
     )
+    transfer_values = build_finanzonline_transfer_values(tax_year)
+    value_sources = build_finanzonline_value_sources(tax_year)
+    for section in FINANZONLINE_SECTIONS:
+        for field in section.fields:
+            value = transfer_values.get(field.key, "")
+            if not value:
+                continue
+            writer.writerow(
+                [
+                    tax_year.year,
+                    section.title,
+                    f"Kennzahl {field.code}" if field.code else field.label,
+                    value,
+                    "",
+                    "",
+                    "",
+                    "",
+                    f"{field.label} (Quelle: {value_sources.get(field.key, '')})",
+                ]
+            )
     for entry in tax_year.entries:
         category = get_category(entry.category)
         writer.writerow(
@@ -391,6 +470,20 @@ def _owned_tax_year(tax_year_id: int) -> TaxYear:
 
 def _owned_document(document_id: int) -> Document:
     return Document.query.join(TaxYear).filter(Document.id == document_id, TaxYear.user_id == g.user.id).first_or_404()
+
+
+def _apply_entry_form(entry: TaxEntry) -> None:
+    category = get_category(request.form.get("category", ""))
+    entry.group = category.group
+    entry.category = category.code
+    entry.label = category.label
+    entry.amount = _decimal_form("amount")
+    entry.deductible_percent = _decimal_form(
+        "deductible_percent", Decimal(str(category.default_deductible_percent))
+    )
+    entry.paid_on = _date_form("paid_on")
+    entry.vendor = request.form.get("vendor", "").strip()
+    entry.description = request.form.get("description", "").strip()
 
 
 def _store_document(tax_year: TaxYear, uploaded: FileStorage) -> Document:

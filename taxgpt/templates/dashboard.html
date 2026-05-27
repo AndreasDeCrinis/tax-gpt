@@ -40,6 +40,60 @@
   {% endfor %}
 </section>
 
+<section class="panel">
+  <div class="section-head">
+    <h2>FinanzOnline-Kennzahlen</h2>
+    <span class="muted">Pendlerpauschale/-euro und Werbungskosten</span>
+  </div>
+  <form method="post" action="{{ url_for('web.update_finanzonline_fields', tax_year_id=tax_year.id) }}" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {% for section in finanzonline_sections %}
+      <div class="fo-section">
+        <div>
+          <h3>{{ section.title }}</h3>
+          <p class="muted">{{ section.subtitle }}</p>
+        </div>
+        <div class="fo-fields">
+          {% for field in section.fields %}
+            <div class="fo-field">
+              <label>
+                <span>
+                  {% if field.code %}<strong>Kennzahl {{ field.code }}</strong>{% endif %}
+                  {{ field.label }}
+                </span>
+                {% if field.input_type == "select" %}
+                  <select name="{{ field.key }}">
+                    {% for option in field.options %}
+                      <option value="{{ option.value }}" {% if finanzonline_transfer_values.get(field.key, '') == option.value %}selected{% endif %}>{{ option.label }}</option>
+                    {% endfor %}
+                  </select>
+                {% elif field.input_type == "text" %}
+                  <input type="text" name="{{ field.key }}" value="{{ finanzonline_transfer_values.get(field.key, '') }}" placeholder="{{ field.placeholder }}">
+                {% else %}
+                  <input type="number" step="0.01" min="0" name="{{ field.key }}" value="{{ finanzonline_transfer_values.get(field.key, '') }}" placeholder="0.00" {% if field.linked_categories %}readonly{% endif %}>
+                {% endif %}
+              </label>
+              {% if field.linked_categories %}
+                <small>Wird automatisch aus Einträgen mit passender Kategorie berechnet.</small>
+              {% endif %}
+              {% if finanzonline_value_sources.get(field.key) %}
+                <small>Quelle des Eingabewerts: {{ finanzonline_value_sources.get(field.key) }}</small>
+              {% endif %}
+              {% if finanzonline_entry_totals.get(field.key) %}
+                <small>Summe aus Einzelbelegen: {{ "%.2f"|format(finanzonline_entry_totals.get(field.key)) }} EUR</small>
+              {% endif %}
+              {% if field.hint %}
+                <small>{{ field.hint }}</small>
+              {% endif %}
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    {% endfor %}
+    <button type="submit">FinanzOnline-Kennzahlen speichern</button>
+  </form>
+</section>
+
 <section class="grid two">
   <div class="panel">
     <h2>Allgemeine Daten</h2>
@@ -83,7 +137,7 @@
         Kategorie
         <select name="category" required>
           {% for category in categories %}
-            <option value="{{ category.code }}">{{ group_labels.get(category.group, category.group) }} - {{ category.label }}</option>
+            <option value="{{ category.code }}">{{ group_labels.get(category.group, category.group) }} - {{ category_display_labels.get(category.code, category.label) }}</option>
           {% endfor %}
         </select>
       </label>
@@ -128,7 +182,7 @@
         <div class="checkline">
           <div>
             <strong>{{ category.question }}</strong>
-            <span>{{ group_labels.get(category.group, category.group) }} - {{ category.finanzonline_section }}</span>
+            <span>{{ group_labels.get(category.group, category.group) }} - {{ category_display_labels.get(category.code, category.label) }}</span>
           </div>
           <input type="number" step="0.01" min="0" name="amount_{{ category.code }}" placeholder="0.00" aria-label="{{ category.label }} Betrag">
           <input type="number" step="0.01" min="0" max="100" name="deductible_{{ category.code }}" value="{{ category.default_deductible_percent }}" aria-label="{{ category.label }} abzugsfähiger Anteil in Prozent">
@@ -197,7 +251,7 @@
             <td>
               {% if document.suggested_category %}
                 {{ document.suggested_vendor }}<br>
-                <small>{{ category_labels.get(document.suggested_category, document.suggested_category) }} - {{ document.suggested_description }}</small>
+                <small>{{ category_display_labels.get(document.suggested_category, document.suggested_category) }} - {{ document.suggested_description }}</small>
               {% else %}
                 <span class="muted">Kein Vorschlag</span>
               {% endif %}
@@ -229,40 +283,53 @@
     <h2>Einträge</h2>
     <span class="muted">{{ tax_year.entries|length }} Einträge</span>
   </div>
-  <div class="table-wrap">
-    <table>
-      <thead>
-        <tr>
-          <th>Kategorie</th>
-          <th>Betrag</th>
-          <th>Abzugsfähig</th>
-          <th>Datum</th>
-          <th>Anbieter</th>
-          <th>Beschreibung</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for entry in tax_year.entries %}
-          <tr>
-            <td>{{ category_labels.get(entry.category, entry.label) }}</td>
-            <td>{{ "%.2f"|format(entry.amount) }} EUR</td>
-            <td>{{ "%.2f"|format(entry.deductible_amount) }} EUR</td>
-            <td>{{ entry.paid_on or "" }}</td>
-            <td>{{ entry.vendor }}</td>
-            <td>{{ entry.description }}</td>
-            <td>
-              <form method="post" action="{{ url_for('web.delete_entry', entry_id=entry.id) }}">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <button class="danger" type="submit">Löschen</button>
-              </form>
-            </td>
-          </tr>
-        {% else %}
-          <tr><td colspan="7" class="muted">Noch keine Einträge.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
+  <div class="entry-editors">
+    {% for entry in tax_year.entries %}
+      <div class="entry-editor">
+        <form method="post" action="{{ url_for('web.update_entry', entry_id=entry.id) }}" class="entry-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <label class="wide">
+            Kategorie / Kennzahl
+            <select name="category" required>
+              {% for category in categories %}
+                <option value="{{ category.code }}" {% if entry.category == category.code %}selected{% endif %}>{{ group_labels.get(category.group, category.group) }} - {{ category_display_labels.get(category.code, category.label) }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>
+            Betrag
+            <input type="number" step="0.01" min="0" name="amount" value="{{ "%.2f"|format(entry.amount) }}" required>
+          </label>
+          <label>
+            Abzugsfähig %
+            <input type="number" step="0.01" min="0" max="100" name="deductible_percent" value="{{ "%.2f"|format(entry.deductible_percent) }}">
+          </label>
+          <label>
+            Datum
+            <input type="date" name="paid_on" value="{{ entry.paid_on or '' }}">
+          </label>
+          <label>
+            Anbieter
+            <input type="text" name="vendor" value="{{ entry.vendor }}">
+          </label>
+          <label class="wide">
+            Beschreibung
+            <textarea name="description" rows="2">{{ entry.description }}</textarea>
+          </label>
+          <div class="entry-meta wide">
+            <span>{% if category_kennzahl_labels.get(entry.category) %}Kennzahl {{ category_kennzahl_labels.get(entry.category) }}{% else %}Keine direkte Kennzahl{% endif %}</span>
+            <span>Abzugsfähiger Betrag: {{ "%.2f"|format(entry.deductible_amount) }} EUR</span>
+          </div>
+          <button type="submit">Speichern</button>
+        </form>
+        <form method="post" action="{{ url_for('web.delete_entry', entry_id=entry.id) }}" class="entry-delete">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button class="danger" type="submit">Löschen</button>
+        </form>
+      </div>
+    {% else %}
+      <p class="muted">Noch keine Einträge.</p>
+    {% endfor %}
   </div>
 </section>
 {% endblock %}

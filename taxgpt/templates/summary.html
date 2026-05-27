@@ -16,6 +16,58 @@
   <p>Diese Übersicht dient als Vorbereitung für FinanzOnline. Automatisch übermittelte Daten, Höchstbeträge, Selbstbehalte und jahresspezifische Feldnamen müssen vor dem Absenden weiterhin in FinanzOnline geprüft werden.</p>
 </section>
 
+<section class="panel">
+  <div class="section-head">
+    <h2>Direkte FinanzOnline-Eingaben</h2>
+    <span class="muted">Kennzahlen zum Übertragen</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Bereich</th>
+          <th>Kennzahl</th>
+          <th>Feld</th>
+          <th>Eingabewert</th>
+          <th>Summe aus Einzelbelegen</th>
+          <th>Quelle</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% set direct_rows = namespace(count=0) %}
+        {% for section in finanzonline_sections %}
+          {% for field in section.fields %}
+            {% set value = finanzonline_transfer_values.get(field.key, '') %}
+            {% set entry_total = finanzonline_entry_totals.get(field.key) %}
+            {% if value or entry_total %}
+              {% set direct_rows.count = direct_rows.count + 1 %}
+              <tr>
+                <td>{{ section.title }}</td>
+                <td>{% if field.code %}{{ field.code }}{% endif %}</td>
+                <td>{{ field.label }}</td>
+                <td>
+                  {% if field.input_type == "select" %}
+                    {% for option in field.options %}
+                      {% if option.value == value %}{{ option.label }}{% endif %}
+                    {% endfor %}
+                  {% else %}
+                    {{ value }}
+                  {% endif %}
+                </td>
+                <td>{% if entry_total %}{{ "%.2f"|format(entry_total) }} EUR{% endif %}</td>
+                <td>{{ finanzonline_value_sources.get(field.key, '') }}</td>
+              </tr>
+            {% endif %}
+          {% endfor %}
+        {% endfor %}
+        {% if direct_rows.count == 0 %}
+          <tr><td colspan="6" class="muted">Noch keine direkten FinanzOnline-Kennzahlen erfasst.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
 <section class="stats-grid">
   <div class="stat">
     <span>Erfasste Einkünfte gesamt</span>
