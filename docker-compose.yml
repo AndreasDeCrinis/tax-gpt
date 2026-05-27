@@ -1,7 +1,7 @@
 services:
   tax-gpt:
     build: .
-    image: adecrinis/tax-gpt:0.1.0
+    image: aderinis/tax-gpt:0.1.0
     ports:
       - "8000:8000"
     environment:

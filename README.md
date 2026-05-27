@@ -58,7 +58,7 @@ The GitHub Actions workflow:
 
 - runs tests on pull requests and pushes
 - validates semantic versioning
-- builds and pushes `adecrinis/tax-gpt` to Docker Hub on pushes to `main` or tags
+- builds and pushes `adcrinis/tax-gpt` to Docker Hub on pushes to `main` or tags
 - pushes tags for `latest`, the semantic version, semver tags from `vX.Y.Z`, and
   the commit SHA
 
