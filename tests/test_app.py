@@ -96,6 +96,30 @@ def test_added_entries_roll_up_to_correct_finanzonline_kennzahl(client, app):
     assert b"250.00" in response.data
 
 
+def test_tax_advice_rolls_up_to_kennzahl_460(client, app):
+    register_and_login(client)
+    with app.app_context():
+        tax_year = TaxYear.query.filter_by(year=2025).one()
+        tax_year_id = tax_year.id
+
+    response = client.post(
+        f"/years/{tax_year_id}/entries",
+        data={
+            "category": "tax_advice",
+            "amount": "180",
+            "deductible_percent": "100",
+            "description": "Steuererklärung",
+        },
+        follow_redirects=True,
+    )
+
+    assert b"Kennzahl 460 - Steuerberatung" in response.data
+
+    summary = client.get(f"/years/{tax_year_id}/summary")
+    assert b"460" in summary.data
+    assert b"180.00" in summary.data
+
+
 def test_existing_entry_can_be_modified_to_another_kennzahl(client, app):
     register_and_login(client)
     with app.app_context():
@@ -137,6 +161,37 @@ def test_existing_entry_can_be_modified_to_another_kennzahl(client, app):
         entry = db.session.get(TaxEntry, entry_id)
         assert entry.category == "training"
         assert entry.deductible_amount == Decimal("250.00")
+
+
+def test_save_actions_redirect_to_relevant_page_anchor(client, app):
+    register_and_login(client)
+    with app.app_context():
+        tax_year = TaxYear.query.filter_by(year=2025).one()
+        tax_year_id = tax_year.id
+
+    response = client.post(
+        f"/years/{tax_year_id}/entries",
+        data={"category": "computer", "amount": "100", "deductible_percent": "100"},
+    )
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith(f"/years/{tax_year_id}#eintraege")
+
+    with app.app_context():
+        entry_id = TaxEntry.query.one().id
+
+    response = client.post(
+        f"/entries/{entry_id}",
+        data={"category": "training", "amount": "200", "deductible_percent": "50"},
+    )
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith(f"/years/{tax_year_id}#entry-{entry_id}")
+
+    response = client.post(
+        f"/years/{tax_year_id}/finanzonline",
+        data={"fo_occupation": "Technischer Angestellter"},
+    )
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith(f"/years/{tax_year_id}#finanzonline-kennzahlen")
 
 
 def test_checklist_adds_only_filled_items(client, app):

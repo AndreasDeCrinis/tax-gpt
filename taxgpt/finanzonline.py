@@ -66,6 +66,19 @@ FINANZONLINE_SECTIONS = (
         ),
     ),
     FinanzOnlineSection(
+        "Sonderausgaben",
+        "Sonderausgaben, die nicht bereits automatisch richtig berücksichtigt wurden.",
+        (
+            FinanzOnlineField(
+                "fo_460",
+                "460",
+                "Steuerberatungskosten",
+                hint="Kosten für Steuerberatung, selbständige Bilanzbuchhaltung oder Personalverrechnung.",
+                linked_categories=("tax_advice",),
+            ),
+        ),
+    ),
+    FinanzOnlineSection(
         "Werbungskosten ohne Anrechnung auf das Werbungskostenpauschale",
         "Diese Kennzahlen werden nicht auf das allgemeine Werbungskostenpauschale angerechnet.",
         (
