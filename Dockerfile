@@ -8,15 +8,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN addgroup --system taxgpt && adduser --system --ingroup taxgpt taxgpt
+RUN groupadd --gid 1000 taxgpt \
+    && useradd --uid 1000 --gid taxgpt --create-home --home-dir /home/taxgpt --shell /usr/sbin/nologin taxgpt
 
 COPY pyproject.toml README.md VERSION ./
 COPY taxgpt ./taxgpt
 
 RUN pip install --no-cache-dir .
 
-RUN mkdir -p /data/uploads && chown -R taxgpt:taxgpt /data /app
-USER taxgpt
+RUN mkdir -p /data/uploads && chown -R 1000:1000 /data /app
+USER 1000:1000
 
 EXPOSE 8000
 
