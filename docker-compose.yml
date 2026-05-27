@@ -1,0 +1,17 @@
+services:
+  tax-gpt:
+    build: .
+    image: adecrinis/tax-gpt:0.1.0
+    ports:
+      - "8000:8000"
+    environment:
+      SECRET_KEY: "change-me"
+      DATABASE_URL: "sqlite:////data/taxgpt.sqlite3"
+      UPLOAD_FOLDER: "/data/uploads"
+      OLLAMA_BASE_URL: "http://192.168.1.163:11434"
+      OLLAMA_MODEL: "llama3.2"
+    volumes:
+      - tax_gpt_data:/data
+
+volumes:
+  tax_gpt_data:

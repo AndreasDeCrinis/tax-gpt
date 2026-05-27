@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Anmelden - Tax GPT Austria{% endblock %}
+{% block content %}
+<section class="auth-panel">
+  <h1>Anmelden</h1>
+  <form method="post" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>
+      E-Mail
+      <input type="email" name="email" autocomplete="email" required>
+    </label>
+    <label>
+      Passwort
+      <input type="password" name="password" autocomplete="current-password" required>
+    </label>
+    <button type="submit">Anmelden</button>
+  </form>
+  <p class="muted">Neu hier? <a href="{{ url_for('web.register') }}">Konto erstellen</a>.</p>
+</section>
+{% endblock %}

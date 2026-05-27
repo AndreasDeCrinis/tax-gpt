@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Tax GPT Austria{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="{{ url_for('web.index') }}">Tax GPT Austria</a>
+      <nav>
+        {% if current_user %}
+          <span>{{ current_user.display_name }}</span>
+          <form method="post" action="{{ url_for('web.logout') }}" class="inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="ghost" type="submit">Abmelden</button>
+          </form>
+        {% else %}
+          <a href="{{ url_for('web.login') }}">Anmelden</a>
+          <a href="{{ url_for('web.register') }}">Registrieren</a>
+        {% endif %}
+      </nav>
+    </header>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="flash-wrap">
+          {% for category, message in messages %}
+            <div class="flash {{ category }}">{{ message }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+
+    <main>
+      {% block content %}{% endblock %}
+    </main>
+
+    <footer>
+      <span>v{{ app_version }}</span>
+      <span>Nur zur Vorbereitung. Einträge immer mit FinanzOnline und aktueller BMF-Information prüfen.</span>
+    </footer>
+  </body>
+</html>

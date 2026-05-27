@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}FinanzOnline-Zusammenfassung {{ tax_year.year }} - Tax GPT Austria{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">FinanzOnline-Zusammenfassung</p>
+    <h1>{{ tax_year.year }}</h1>
+  </div>
+  <div class="actions">
+    <a class="button secondary" href="{{ url_for('web.year_dashboard', tax_year_id=tax_year.id) }}">Zurück</a>
+    <a class="button secondary" href="{{ url_for('web.export_csv', tax_year_id=tax_year.id) }}">CSV</a>
+  </div>
+</section>
+
+<section class="panel callout">
+  <p>Diese Übersicht dient als Vorbereitung für FinanzOnline. Automatisch übermittelte Daten, Höchstbeträge, Selbstbehalte und jahresspezifische Feldnamen müssen vor dem Absenden weiterhin in FinanzOnline geprüft werden.</p>
+</section>
+
+<section class="stats-grid">
+  <div class="stat">
+    <span>Erfasste Einkünfte gesamt</span>
+    <strong>{{ "%.2f"|format(summary.total_income) }} EUR</strong>
+  </div>
+  <div class="stat">
+    <span>Erfasste Abzüge gesamt</span>
+    <strong>{{ "%.2f"|format(summary.total_deductions) }} EUR</strong>
+  </div>
+  {% for group in summary.group_totals %}
+    <div class="stat">
+      <span>{{ group.label }}</span>
+      <strong>{{ "%.2f"|format(group.total) }} EUR</strong>
+    </div>
+  {% endfor %}
+</section>
+
+<section class="panel">
+  <h2>Allgemeine Daten</h2>
+  <dl class="facts">
+    <dt>Erklärungsweg</dt>
+    <dd>{% if tax_year.filing_kind == "arbeitnehmerveranlagung" %}Arbeitnehmerveranlagung / L1{% elif tax_year.filing_kind == "einkommensteuer" %}Einkommensteuer / E1{% else %}{{ tax_year.filing_kind }}{% endif %}</dd>
+    {% for key, value in summary.facts.items() %}
+      {% if value not in ("", none, false) %}
+        <dt>{{ fact_labels.get(key, key|replace("_", " ")|title) }}</dt>
+        <dd>{% if value is sameas true %}Ja{% else %}{{ value }}{% endif %}</dd>
+      {% endif %}
+    {% endfor %}
+  </dl>
+</section>
+
+{% for section in summary.sections %}
+  <section class="panel" id="{{ section.name|replace(' ', '-') }}">
+    <div class="section-head">
+      <h2>{{ section.name }}</h2>
+      <strong>{{ "%.2f"|format(section.total) }} EUR</strong>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>FinanzOnline-Position</th>
+            <th>Betrag</th>
+            <th>Abzugsfähig</th>
+            <th>Nachweis</th>
+            <th>Hinweis</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for entry in section.entries %}
+            <tr>
+              <td>
+                <strong>{{ entry.category }}</strong><br>
+                <small>{{ entry.vendor }} {{ entry.paid_on or "" }}</small><br>
+                <small>{{ entry.description }}</small>
+              </td>
+              <td>{{ "%.2f"|format(entry.amount) }} EUR</td>
+              <td>{{ "%.2f"|format(entry.deductible_amount) }} EUR</td>
+              <td>{{ entry.source }}</td>
+              <td>{{ entry.hint }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% else %}
+  <section class="panel">
+    <p class="muted">Noch keine Einträge.</p>
+  </section>
+{% endfor %}
+{% endblock %}

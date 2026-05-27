@@ -1,0 +1,268 @@
+{% extends "base.html" %}
+{% block title %}{{ tax_year.year }} - Tax GPT Austria{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">Steuerjahr</p>
+    <h1>{{ tax_year.year }}</h1>
+  </div>
+  <div class="actions">
+    <form method="post" action="{{ url_for('web.create_year') }}" class="year-create">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="number" name="year" min="2025" value="2026" aria-label="Steuerjahr">
+      <button type="submit">Jahr anlegen</button>
+    </form>
+    <a class="button secondary" href="{{ url_for('web.summary', tax_year_id=tax_year.id) }}">FinanzOnline-Zusammenfassung</a>
+    <a class="button secondary" href="{{ url_for('web.export_csv', tax_year_id=tax_year.id) }}">CSV</a>
+  </div>
+</section>
+
+<section class="year-switcher">
+  {% for item in tax_years %}
+    <a class="{% if item.id == tax_year.id %}active{% endif %}" href="{{ url_for('web.year_dashboard', tax_year_id=item.id) }}">{{ item.year }}</a>
+  {% endfor %}
+</section>
+
+<section class="stats-grid">
+  <div class="stat">
+    <span>Erfasste Einkünfte</span>
+    <strong>{{ "%.2f"|format(summary.total_income) }} EUR</strong>
+  </div>
+  <div class="stat">
+    <span>Erfasste Abzüge</span>
+    <strong>{{ "%.2f"|format(summary.total_deductions) }} EUR</strong>
+  </div>
+  {% for group in summary.group_totals %}
+    <div class="stat">
+      <span>{{ group.label }}</span>
+      <strong>{{ "%.2f"|format(group.total) }} EUR</strong>
+    </div>
+  {% endfor %}
+</section>
+
+<section class="grid two">
+  <div class="panel">
+    <h2>Allgemeine Daten</h2>
+    <form method="post" action="{{ url_for('web.update_settings', tax_year_id=tax_year.id) }}" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label class="wide">
+        Erklärungsweg
+        <select name="filing_kind">
+          <option value="arbeitnehmerveranlagung" {% if tax_year.filing_kind == "arbeitnehmerveranlagung" %}selected{% endif %}>Arbeitnehmerveranlagung / L1</option>
+          <option value="einkommensteuer" {% if tax_year.filing_kind == "einkommensteuer" %}selected{% endif %}>Einkommensteuer / E1</option>
+        </select>
+      </label>
+      {% set facts = tax_year.facts %}
+      {% for field in fact_fields %}
+        <label class="{% if field.type == 'checkbox' %}check{% endif %}">
+          {% if field.type == "checkbox" %}
+            <input type="checkbox" name="{{ field.name }}" {% if facts.get(field.name) %}checked{% endif %}>
+            <span>{{ field.label }}</span>
+          {% elif field.type == "money" %}
+            {{ field.label }}
+            <input type="number" step="0.01" name="{{ field.name }}" value="{{ facts.get(field.name, '') }}">
+          {% else %}
+            {{ field.label }}
+            <input type="{{ field.type }}" name="{{ field.name }}" value="{{ facts.get(field.name, '') }}">
+          {% endif %}
+        </label>
+      {% endfor %}
+      <label class="wide">
+        Notizen
+        <textarea name="notes" rows="4">{{ tax_year.notes }}</textarea>
+      </label>
+      <button type="submit">Allgemeine Daten speichern</button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <h2>Eintrag hinzufügen</h2>
+    <form method="post" action="{{ url_for('web.add_entry', tax_year_id=tax_year.id) }}" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>
+        Kategorie
+        <select name="category" required>
+          {% for category in categories %}
+            <option value="{{ category.code }}">{{ group_labels.get(category.group, category.group) }} - {{ category.label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div class="form-row">
+        <label>
+          Betrag
+          <input type="number" step="0.01" min="0" name="amount" required>
+        </label>
+        <label>
+          Abzugsfähig %
+          <input type="number" step="0.01" min="0" max="100" name="deductible_percent" value="100">
+        </label>
+      </div>
+      <div class="form-row">
+        <label>
+          Datum
+          <input type="date" name="paid_on">
+        </label>
+        <label>
+          Anbieter
+          <input type="text" name="vendor">
+        </label>
+      </div>
+      <label>
+        Beschreibung
+        <textarea name="description" rows="3"></textarea>
+      </label>
+      <button type="submit">Eintrag hinzufügen</button>
+    </form>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="section-head">
+    <h2>Abzugs-Checkliste</h2>
+    <span class="muted">{{ questions|length }} Fragen</span>
+  </div>
+  <form method="post" action="{{ url_for('web.save_checklist', tax_year_id=tax_year.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="checklist">
+      {% for category in questions %}
+        <div class="checkline">
+          <div>
+            <strong>{{ category.question }}</strong>
+            <span>{{ group_labels.get(category.group, category.group) }} - {{ category.finanzonline_section }}</span>
+          </div>
+          <input type="number" step="0.01" min="0" name="amount_{{ category.code }}" placeholder="0.00" aria-label="{{ category.label }} Betrag">
+          <input type="number" step="0.01" min="0" max="100" name="deductible_{{ category.code }}" value="{{ category.default_deductible_percent }}" aria-label="{{ category.label }} abzugsfähiger Anteil in Prozent">
+          <input type="text" name="vendor_{{ category.code }}" placeholder="Anbieter" aria-label="{{ category.label }} Anbieter">
+          <input type="text" name="description_{{ category.code }}" placeholder="Notiz" aria-label="{{ category.label }} Notiz">
+        </div>
+      {% endfor %}
+    </div>
+    <button type="submit">Ausgefüllte Checklistenpunkte hinzufügen</button>
+  </form>
+</section>
+
+<section class="grid two">
+  <div class="panel">
+    <h2>Dokumente</h2>
+    <form method="post" action="{{ url_for('web.upload_document', tax_year_id=tax_year.id) }}" enctype="multipart/form-data" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>
+        Rechnung oder Dokument
+        <input type="file" name="document" accept=".pdf,.png,.jpg,.jpeg,.webp,.txt,.csv" required>
+      </label>
+      <label class="check">
+        <input type="checkbox" name="analyze" checked>
+        <span>Mit Ollama analysieren</span>
+      </label>
+      <button type="submit">Dokument hochladen</button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <h2>FinanzOnline-Bereiche</h2>
+    <div class="summary-list">
+      {% for section in summary.sections %}
+        <a href="{{ url_for('web.summary', tax_year_id=tax_year.id) }}#{{ section.name|replace(' ', '-') }}">
+          <span>{{ section.name }}</span>
+          <strong>{{ "%.2f"|format(section.total) }} EUR</strong>
+        </a>
+      {% else %}
+        <p class="muted">Noch keine Einträge.</p>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="section-head">
+    <h2>Hochgeladene Dokumente</h2>
+    <span class="muted">{{ tax_year.documents|length }} Dateien</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Dokument</th>
+          <th>Status</th>
+          <th>Vorschlag</th>
+          <th>Betrag</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for document in tax_year.documents %}
+          <tr>
+            <td>{{ document.original_filename }}</td>
+            <td>{{ document_status_labels.get(document.status, document.status) }}{% if document.error %}<br><small>{{ document.error }}</small>{% endif %}</td>
+            <td>
+              {% if document.suggested_category %}
+                {{ document.suggested_vendor }}<br>
+                <small>{{ category_labels.get(document.suggested_category, document.suggested_category) }} - {{ document.suggested_description }}</small>
+              {% else %}
+                <span class="muted">Kein Vorschlag</span>
+              {% endif %}
+            </td>
+            <td>{% if document.suggested_amount is not none %}{{ "%.2f"|format(document.suggested_amount) }} EUR{% endif %}</td>
+            <td class="row-actions">
+              <form method="post" action="{{ url_for('web.analyse_existing_document', document_id=document.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button class="secondary" type="submit">Analyse</button>
+              </form>
+              {% if document.suggested_category %}
+                <form method="post" action="{{ url_for('web.apply_document_suggestion', document_id=document.id) }}">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <button type="submit">Übernehmen</button>
+                </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="5" class="muted">Keine Dokumente hochgeladen.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="section-head">
+    <h2>Einträge</h2>
+    <span class="muted">{{ tax_year.entries|length }} Einträge</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Kategorie</th>
+          <th>Betrag</th>
+          <th>Abzugsfähig</th>
+          <th>Datum</th>
+          <th>Anbieter</th>
+          <th>Beschreibung</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry in tax_year.entries %}
+          <tr>
+            <td>{{ category_labels.get(entry.category, entry.label) }}</td>
+            <td>{{ "%.2f"|format(entry.amount) }} EUR</td>
+            <td>{{ "%.2f"|format(entry.deductible_amount) }} EUR</td>
+            <td>{{ entry.paid_on or "" }}</td>
+            <td>{{ entry.vendor }}</td>
+            <td>{{ entry.description }}</td>
+            <td>
+              <form method="post" action="{{ url_for('web.delete_entry', entry_id=entry.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button class="danger" type="submit">Löschen</button>
+              </form>
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="7" class="muted">Noch keine Einträge.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}
