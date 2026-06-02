@@ -52,25 +52,26 @@ pytest
 
 ## Releases and image publishing
 
-The project version lives in `VERSION`, `pyproject.toml`, and `taxgpt.__version__`.
-Tests check that the version is semantic versioning and in sync.
+The GitHub Actions workflow uses semantic-release with conventional commits.
+On pushes to `main` or `master`, semantic-release decides whether to publish a
+new version, updates `VERSION`, `pyproject.toml`, `taxgpt.__version__`, and
+`CHANGELOG.md`, creates the release tag, and then publishes the Docker image.
 
-The GitHub Actions workflow:
+Pull requests and manual workflow runs build the Docker image without pushing it.
 
-- runs tests on pull requests and pushes
-- validates semantic versioning
-- builds and pushes `adcrinis/tax-gpt` to Docker Hub on pushes to `main` or tags
-- pushes tags for `latest`, the semantic version, semver tags from `vX.Y.Z`, and
-  the commit SHA
+Docker tags pushed on release:
+
+- `latest`
+- the semantic version, for example `1.2.3`
+- the minor line, for example `1.2`
+- the major line, for example `1`
+- the prefixed version, for example `v1.2.3`
+- the short commit SHA
 
 Required GitHub secrets:
 
 - `DOCKERHUB_USERNAME`
 - `DOCKERHUB_TOKEN`
 
-Tag a release with the same version:
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
+Use conventional commit messages such as `feat: add deduction import`,
+`fix: correct Kennzahl mapping`, or `chore: update dependencies`.
