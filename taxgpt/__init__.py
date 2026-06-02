@@ -9,7 +9,7 @@ from .config import Config
 from .models import db
 from .views import bp as web_bp
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 
 def create_app(config: object | dict | None = None) -> Flask:

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tax-gpt"
-version = "1.0.0"
+version = "1.1.0"
 description = "A multi-user Austrian income tax preparation assistant with SQLite and Ollama document analysis."
 readme = "README.md"
 requires-python = ">=3.12"

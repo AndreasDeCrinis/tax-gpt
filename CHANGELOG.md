@@ -1,3 +1,9 @@
+## [1.1.0](https://github.com/AndreasDeCrinis/tax-gpt/compare/v1.0.0...v1.1.0) (2026-06-02)
+
+### Features
+
+* invoice analysis ([d29ea1c](https://github.com/AndreasDeCrinis/tax-gpt/commit/d29ea1cf7fb8fdd320ecf6c4f57b60863331ca91))
+
 ## 1.0.0 (2026-06-02)
 
 ### Bug Fixes
