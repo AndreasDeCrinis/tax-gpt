@@ -1,3 +1,9 @@
+## [1.2.0](https://github.com/AndreasDeCrinis/tax-gpt/compare/v1.1.0...v1.2.0) (2026-06-02)
+
+### Features
+
+* connect documents with line items ([d01f0fa](https://github.com/AndreasDeCrinis/tax-gpt/commit/d01f0fa63b6b3d1ebd7d3678a4857bf3dc3f507b))
+
 ## [1.1.0](https://github.com/AndreasDeCrinis/tax-gpt/compare/v1.0.0...v1.1.0) (2026-06-02)
 
 ### Features
