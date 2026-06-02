@@ -66,9 +66,13 @@ def analyze_document(
     parsed["raw_response"] = raw_response
     parsed["extracted_text"] = text
     parsed["category"] = _normalise_category(parsed.get("category", ""))
+    parsed["invoice_total"] = _decimal_or_none(parsed.get("invoice_total"))
     parsed["amount"] = _decimal_or_none(parsed.get("amount"))
     parsed["date"] = _date_or_none(parsed.get("date"))
     parsed["confidence"] = _confidence(parsed.get("confidence"))
+    parsed["line_items"] = _normalise_line_items(parsed.get("line_items"))
+    if parsed["amount"] is None:
+        parsed["amount"] = _selected_line_total(parsed["line_items"])
     return parsed
 
 
@@ -123,10 +127,17 @@ Choose exactly one category code from this list:
 {category_lines}
 
 Return only JSON with these keys:
-category, amount, vendor, date, description, confidence, reasoning.
+category, invoice_total, amount, vendor, date, description, confidence, reasoning, line_items.
 
 Rules:
-- amount must be the gross amount paid by the taxpayer if visible, otherwise null.
+- invoice_total must be the full gross invoice total if visible, otherwise null.
+- line_items must be a list of all invoice positions you can identify. Each item must have:
+  description, amount, category, tax_relevant, deductible_percent, reasoning.
+- For line item amount, use the gross amount of that invoice position if visible.
+- For category inside line_items, choose exactly one category code from the list above, or null if unclear.
+- tax_relevant should be true only if the item is plausibly deductible for an Austrian income tax return.
+- Mark mixed/private items as false when the job connection is unclear, so the user can decide manually.
+- amount must be the sum of line_items that are tax_relevant=true, adjusted by deductible_percent. If there are no line_items, use the gross tax-relevant amount paid by the taxpayer if visible, otherwise null.
 - date must be ISO format YYYY-MM-DD if visible, otherwise null.
 - confidence is a number from 0 to 1.
 - description should be short and suitable for a tax entry.
@@ -154,6 +165,56 @@ def _parse_json(raw: str) -> dict[str, Any]:
 def _normalise_category(category: str) -> str:
     allowed = {item.code for item in CATEGORIES}
     return category if category in allowed else ""
+
+
+def _normalise_line_items(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+
+    line_items = []
+    for index, item in enumerate(value, start=1):
+        if not isinstance(item, dict):
+            continue
+
+        amount = _decimal_or_none(item.get("amount"))
+        line_items.append(
+            {
+                "id": str(item.get("id") or index),
+                "description": str(item.get("description") or item.get("name") or f"Position {index}")[:500],
+                "amount": amount,
+                "category": _normalise_category(str(item.get("category") or "")),
+                "tax_relevant": _bool_value(item.get("tax_relevant")),
+                "deductible_percent": _percent_or_default(item.get("deductible_percent")),
+                "reasoning": str(item.get("reasoning") or "")[:1000],
+            }
+        )
+    return line_items
+
+
+def _selected_line_total(line_items: list[dict[str, Any]]) -> Decimal | None:
+    total = Decimal("0.00")
+    found = False
+    for item in line_items:
+        amount = item.get("amount")
+        if item.get("tax_relevant") and amount is not None:
+            total += amount * item["deductible_percent"] / Decimal("100")
+            found = True
+    return total.quantize(Decimal("0.01")) if found else None
+
+
+def _bool_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "ja", "y"}
+    return bool(value)
+
+
+def _percent_or_default(value: Any) -> Decimal:
+    percentage = _decimal_or_none(value)
+    if percentage is None:
+        return Decimal("100.00")
+    return max(Decimal("0.00"), min(Decimal("100.00"), percentage))
 
 
 def _decimal_or_none(value: Any) -> Decimal | None:

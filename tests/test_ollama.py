@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
@@ -96,3 +97,59 @@ def test_image_document_uses_vision_model(tmp_path, monkeypatch):
     assert captured_payload["model"] == "minicpm-v:latest"
     assert captured_payload["images"]
     assert result["category"] == "tax_advice"
+
+
+def test_document_analysis_normalises_invoice_total_and_line_items(tmp_path, monkeypatch):
+    document = tmp_path / "invoice.txt"
+    document.write_text("Monitor 120 EUR\nPrivate item 180 EUR\nTotal 300 EUR", encoding="utf-8")
+
+    def fake_post(*args, **kwargs):
+        return FakeResponse(
+            status_code=200,
+            payload={
+                "response": json.dumps(
+                    {
+                        "category": "computer",
+                        "invoice_total": "300.00",
+                        "vendor": "Electronics Shop",
+                        "date": "2025-04-02",
+                        "description": "Mixed invoice",
+                        "confidence": 0.9,
+                        "line_items": [
+                            {
+                                "description": "Monitor",
+                                "amount": "120.00",
+                                "category": "computer",
+                                "tax_relevant": True,
+                                "deductible_percent": 50,
+                                "reasoning": "Work display",
+                            },
+                            {
+                                "description": "Private item",
+                                "amount": "180.00",
+                                "category": "",
+                                "tax_relevant": False,
+                                "deductible_percent": 100,
+                            },
+                        ],
+                    }
+                )
+            },
+        )
+
+    monkeypatch.setattr("taxgpt.services.ollama.requests.post", fake_post)
+
+    result = analyze_document(
+        path=str(document),
+        original_filename="invoice.txt",
+        mime_type="text/plain",
+        base_url="http://ollama",
+        model="llama3.1:latest",
+        timeout=90,
+    )
+
+    assert result["invoice_total"] == Decimal("300.00")
+    assert result["amount"] == Decimal("60.00")
+    assert result["line_items"][0]["category"] == "computer"
+    assert result["line_items"][0]["tax_relevant"] is True
+    assert result["line_items"][1]["tax_relevant"] is False

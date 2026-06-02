@@ -341,3 +341,83 @@ def test_upload_document_analysis_can_be_applied(client, app, monkeypatch):
         entry = TaxEntry.query.one()
         assert entry.category == "tax_advice"
         assert entry.amount == Decimal("180.00")
+
+
+def test_upload_document_line_items_can_be_selected(client, app, monkeypatch):
+    register_and_login(client)
+    with app.app_context():
+        tax_year = TaxYear.query.filter_by(year=2025).one()
+        tax_year_id = tax_year.id
+
+    def fake_analyze_document(**kwargs):
+        return {
+            "category": "computer",
+            "invoice_total": Decimal("300.00"),
+            "amount": Decimal("120.00"),
+            "vendor": "Electronics Shop",
+            "date": date(2025, 4, 2),
+            "description": "Teilweise beruflich relevante Rechnung",
+            "confidence": 0.9,
+            "extracted_text": "Monitor 120 EUR, private headphones 180 EUR",
+            "line_items": [
+                {
+                    "id": "1",
+                    "description": "Monitor",
+                    "amount": Decimal("120.00"),
+                    "category": "computer",
+                    "tax_relevant": True,
+                    "deductible_percent": Decimal("100.00"),
+                    "reasoning": "Arbeitsmittel",
+                },
+                {
+                    "id": "2",
+                    "description": "Private headphones",
+                    "amount": Decimal("180.00"),
+                    "category": "",
+                    "tax_relevant": False,
+                    "deductible_percent": Decimal("100.00"),
+                    "reasoning": "Privat wirkender Artikel",
+                },
+            ],
+        }
+
+    monkeypatch.setattr("taxgpt.views.analyze_document", fake_analyze_document)
+
+    response = client.post(
+        f"/years/{tax_year_id}/documents",
+        data={
+            "analyze": "on",
+            "document": (io.BytesIO(b"invoice text"), "mixed-invoice.txt"),
+        },
+        content_type="multipart/form-data",
+        follow_redirects=True,
+    )
+
+    assert b"Rechnung:</strong> 300.00 EUR" in response.data
+    assert b"Relevant:</strong> 120.00 EUR" in response.data
+    assert b"Private headphones" in response.data
+
+    with app.app_context():
+        document = Document.query.one()
+        document_id = document.id
+
+    client.post(
+        f"/documents/{document_id}/apply",
+        data={
+            "line_item_id": ["1"],
+            "line_amount_1": "120.00",
+            "line_category_1": "computer",
+            "line_deductible_1": "50",
+            "line_amount_2": "180.00",
+            "line_category_2": "training",
+            "line_deductible_2": "100",
+        },
+        follow_redirects=True,
+    )
+
+    with app.app_context():
+        entries = TaxEntry.query.all()
+        assert len(entries) == 1
+        assert entries[0].category == "computer"
+        assert entries[0].amount == Decimal("120.00")
+        assert entries[0].deductible_amount == Decimal("60.00")

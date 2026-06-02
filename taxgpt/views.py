@@ -108,6 +108,8 @@ def inject_globals() -> dict[str, Any]:
         "category_labels": CATEGORY_LABELS,
         "category_display_labels": CATEGORY_DISPLAY_LABELS,
         "category_kennzahl_labels": CATEGORY_KENNZAHL_LABELS,
+        "document_invoice_total": _document_invoice_total,
+        "document_line_items": _document_line_items,
     }
 
 
@@ -368,6 +370,50 @@ def apply_document_suggestion(document_id: int) -> Response:
         flash("Es ist kein Kategorie-Vorschlag vorhanden.", "error")
         return _dashboard_redirect(document.tax_year_id, "hochgeladene-dokumente")
 
+    line_items = _document_line_items(document)
+    if line_items:
+        selected_ids = set(request.form.getlist("line_item_id"))
+        if not selected_ids:
+            flash("Bitte mindestens eine relevante Rechnungsposition auswählen.", "error")
+            return _dashboard_redirect(document.tax_year_id, f"document-{document.id}")
+
+        created = 0
+        for item in line_items:
+            line_id = item["id"]
+            if line_id not in selected_ids:
+                continue
+
+            category = get_category(request.form.get(f"line_category_{line_id}", item["category"]) or document.suggested_category)
+            amount = _decimal_value_or_none(request.form.get(f"line_amount_{line_id}") or item["amount"]) or Decimal("0.00")
+            if amount <= 0:
+                continue
+
+            entry = TaxEntry(
+                tax_year_id=document.tax_year_id,
+                group=category.group,
+                category=category.code,
+                label=category.label,
+                amount=amount,
+                deductible_percent=_decimal_value_or_none(
+                    request.form.get(f"line_deductible_{line_id}") or item["deductible_percent"]
+                )
+                or item["deductible_percent"],
+                paid_on=document.suggested_date,
+                vendor=document.suggested_vendor,
+                description=item["description"],
+                document_id=document.id,
+            )
+            db.session.add(entry)
+            created += 1
+
+        if created == 0:
+            flash("Keine ausgewählte Rechnungsposition hatte einen verwertbaren Betrag.", "error")
+            return _dashboard_redirect(document.tax_year_id, f"document-{document.id}")
+
+        db.session.commit()
+        flash(f"{created} Rechnungsposition{'en' if created != 1 else ''} als Steuer-Eintrag übernommen.", "success")
+        return _dashboard_redirect(document.tax_year_id, "eintraege")
+
     category = get_category(document.suggested_category)
     entry = TaxEntry(
         tax_year_id=document.tax_year_id,
@@ -476,6 +522,41 @@ def _dashboard_redirect(tax_year_id: int, anchor: str) -> Response:
     return redirect(f"{url_for('web.year_dashboard', tax_year_id=tax_year_id)}#{anchor}")
 
 
+def _document_invoice_total(document: Document) -> Decimal | None:
+    return _decimal_value_or_none(document.analysis.get("invoice_total"))
+
+
+def _document_line_items(document: Document) -> list[dict[str, Any]]:
+    raw_items = document.analysis.get("line_items")
+    if not isinstance(raw_items, list):
+        return []
+
+    line_items = []
+    for index, item in enumerate(raw_items, start=1):
+        if not isinstance(item, dict):
+            continue
+        line_id = _line_item_id(item, index)
+        amount = _decimal_value_or_none(item.get("amount"))
+        line_items.append(
+            {
+                "id": line_id,
+                "description": str(item.get("description") or f"Position {index}")[:500],
+                "amount": amount or Decimal("0.00"),
+                "category": item.get("category") or document.suggested_category,
+                "tax_relevant": bool(item.get("tax_relevant")),
+                "deductible_percent": _decimal_value_or_none(item.get("deductible_percent")) or Decimal("100.00"),
+                "reasoning": str(item.get("reasoning") or "")[:1000],
+            }
+        )
+    return line_items
+
+
+def _line_item_id(item: dict[str, Any], index: int) -> str:
+    raw_id = str(item.get("id") or index)
+    safe_id = "".join(character if character.isalnum() else "_" for character in raw_id)
+    return safe_id or str(index)
+
+
 def _apply_entry_form(entry: TaxEntry) -> None:
     category = get_category(request.form.get("category", ""))
     entry.group = category.group
@@ -555,6 +636,18 @@ def _decimal_value(value: str | None, default: Decimal = Decimal("0.00")) -> Dec
         return Decimal(value.replace(",", ".")).quantize(Decimal("0.01"))
     except (InvalidOperation, AttributeError):
         return default
+
+
+def _decimal_value_or_none(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    try:
+        text = str(value).strip()
+        if not text:
+            return None
+        return Decimal(text.replace(",", ".")).quantize(Decimal("0.01"))
+    except (InvalidOperation, ValueError):
+        return None
 
 
 def _int_form(name: str, default: int = 0) -> int:
