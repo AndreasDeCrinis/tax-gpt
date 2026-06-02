@@ -10,7 +10,8 @@ services:
       DATABASE_URL: "sqlite:////data/taxgpt.sqlite3"
       UPLOAD_FOLDER: "/data/uploads"
       OLLAMA_BASE_URL: "http://192.168.1.163:11434"
-      OLLAMA_MODEL: "llama3.2"
+      OLLAMA_MODEL: "llama3.2:latest"
+      OLLAMA_VISION_MODEL: "minicpm-v:latest"
     volumes:
       - tax_gpt_data:/data
 

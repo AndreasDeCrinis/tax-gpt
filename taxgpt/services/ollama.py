@@ -15,6 +15,10 @@ from pypdf import PdfReader
 from taxgpt.taxonomy import CATEGORIES
 
 
+class OllamaError(RuntimeError):
+    pass
+
+
 def extract_document_text(path: str, mime_type: str = "") -> str:
     file_path = Path(path)
     guessed_type = mime_type or mimetypes.guess_type(file_path.name)[0] or ""
@@ -36,22 +40,26 @@ def analyze_document(
     mime_type: str,
     base_url: str,
     model: str,
+    vision_model: str | None = None,
     timeout: int,
 ) -> dict[str, Any]:
     text = extract_document_text(path, mime_type)
     prompt = _build_prompt(original_filename=original_filename, extracted_text=text)
+    selected_model = model
     payload: dict[str, Any] = {
-        "model": model,
+        "model": selected_model,
         "prompt": prompt,
         "stream": False,
         "format": "json",
     }
 
     if not text and _looks_like_image(mime_type, path):
+        selected_model = vision_model or model
+        payload["model"] = selected_model
         payload["images"] = [_base64_file(path)]
 
     response = requests.post(f"{base_url.rstrip('/')}/api/generate", json=payload, timeout=timeout)
-    response.raise_for_status()
+    _raise_for_ollama_error(response, base_url=base_url, timeout=timeout)
     body = response.json()
     raw_response = body.get("response", "")
     parsed = _parse_json(raw_response)
@@ -62,6 +70,47 @@ def analyze_document(
     parsed["date"] = _date_or_none(parsed.get("date"))
     parsed["confidence"] = _confidence(parsed.get("confidence"))
     return parsed
+
+
+def _raise_for_ollama_error(response: requests.Response, *, base_url: str, timeout: int) -> None:
+    if response.ok:
+        return
+
+    error_text = _response_error_text(response)
+    message = f"Ollama returned HTTP {response.status_code} for POST {response.url}: {error_text}"
+    available_models = _available_models(base_url, timeout)
+    if available_models:
+        message += f" Installierte Modelle: {', '.join(available_models)}."
+    if response.status_code == 404 and "model" in error_text.lower():
+        message += " Bitte OLLAMA_MODEL oder OLLAMA_VISION_MODEL auf ein installiertes Modell setzen oder das Modell mit `ollama pull <modell>` installieren."
+    raise OllamaError(message)
+
+
+def _response_error_text(response: requests.Response) -> str:
+    try:
+        data = response.json()
+    except ValueError:
+        return response.text.strip() or "Keine Fehlermeldung im Response-Body."
+
+    if isinstance(data, dict):
+        return str(data.get("error") or data)
+    return str(data)
+
+
+def _available_models(base_url: str, timeout: int) -> list[str]:
+    try:
+        response = requests.get(f"{base_url.rstrip('/')}/api/tags", timeout=min(timeout, 10))
+        response.raise_for_status()
+        data = response.json()
+    except Exception:
+        return []
+
+    models = data.get("models", []) if isinstance(data, dict) else []
+    names = []
+    for model in models:
+        if isinstance(model, dict) and model.get("name"):
+            names.append(str(model["name"]))
+    return names
 
 
 def _build_prompt(*, original_filename: str, extracted_text: str) -> str:

@@ -518,6 +518,7 @@ def _analyse_and_update_document(document: Document) -> None:
             mime_type=document.mime_type,
             base_url=current_app.config["OLLAMA_BASE_URL"],
             model=current_app.config["OLLAMA_MODEL"],
+            vision_model=current_app.config["OLLAMA_VISION_MODEL"],
             timeout=current_app.config["OLLAMA_TIMEOUT_SECONDS"],
         )
     except Exception as exc:  # Ollama is optional at runtime; keep the upload usable.

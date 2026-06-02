@@ -31,7 +31,8 @@ export SECRET_KEY="replace-me"
 export DATABASE_URL="sqlite:////absolute/path/taxgpt.sqlite3"
 export UPLOAD_FOLDER="/absolute/path/uploads"
 export OLLAMA_BASE_URL="http://192.168.1.163:11434"
-export OLLAMA_MODEL="llama3.2"
+export OLLAMA_MODEL="llama3.1:latest"
+export OLLAMA_VISION_MODEL="minicpm-v:latest"
 ```
 
 ## Docker
