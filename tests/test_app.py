@@ -421,3 +421,153 @@ def test_upload_document_line_items_can_be_selected(client, app, monkeypatch):
         assert entries[0].category == "computer"
         assert entries[0].amount == Decimal("120.00")
         assert entries[0].deductible_amount == Decimal("60.00")
+
+
+def test_reanalyse_document_updates_existing_line_item_entry(client, app, monkeypatch):
+    register_and_login(client)
+    with app.app_context():
+        tax_year = TaxYear.query.filter_by(year=2025).one()
+        tax_year_id = tax_year.id
+
+    analyses = iter(
+        [
+            {
+                "category": "computer",
+                "invoice_total": Decimal("300.00"),
+                "amount": Decimal("120.00"),
+                "vendor": "Electronics Shop",
+                "date": date(2025, 4, 2),
+                "description": "Erste Analyse",
+                "confidence": 0.9,
+                "extracted_text": "Monitor 120 EUR",
+                "line_items": [
+                    {
+                        "id": "monitor",
+                        "description": "Monitor",
+                        "amount": Decimal("120.00"),
+                        "category": "computer",
+                        "tax_relevant": True,
+                        "deductible_percent": Decimal("100.00"),
+                    }
+                ],
+            },
+            {
+                "category": "computer",
+                "invoice_total": Decimal("360.00"),
+                "amount": Decimal("240.00"),
+                "vendor": "Electronics Shop",
+                "date": date(2025, 4, 3),
+                "description": "Zweite Analyse",
+                "confidence": 0.95,
+                "extracted_text": "Fortbildung 240 EUR",
+                "line_items": [
+                    {
+                        "id": "monitor",
+                        "description": "Fortbildung aus Rechnung",
+                        "amount": Decimal("240.00"),
+                        "category": "training",
+                        "tax_relevant": True,
+                        "deductible_percent": Decimal("50.00"),
+                    }
+                ],
+            },
+        ]
+    )
+
+    monkeypatch.setattr("taxgpt.views.analyze_document", lambda **kwargs: next(analyses))
+
+    client.post(
+        f"/years/{tax_year_id}/documents",
+        data={
+            "analyze": "on",
+            "document": (io.BytesIO(b"invoice text"), "mixed-invoice.txt"),
+        },
+        content_type="multipart/form-data",
+        follow_redirects=True,
+    )
+
+    with app.app_context():
+        document = Document.query.one()
+        document_id = document.id
+
+    client.post(
+        f"/documents/{document_id}/apply",
+        data={
+            "line_item_id": ["monitor"],
+            "line_amount_monitor": "120.00",
+            "line_category_monitor": "computer",
+            "line_deductible_monitor": "100",
+        },
+        follow_redirects=True,
+    )
+
+    client.post(f"/documents/{document_id}/analyse", follow_redirects=True)
+
+    with app.app_context():
+        entries = TaxEntry.query.all()
+        assert len(entries) == 1
+        assert entries[0].document_id == document_id
+        assert entries[0].document_line_id == "monitor"
+        assert entries[0].category == "training"
+        assert entries[0].amount == Decimal("240.00")
+        assert entries[0].deductible_amount == Decimal("120.00")
+
+
+def test_reapplying_document_line_item_updates_existing_entry(client, app, monkeypatch):
+    register_and_login(client)
+    with app.app_context():
+        tax_year = TaxYear.query.filter_by(year=2025).one()
+        tax_year_id = tax_year.id
+
+    def fake_analyze_document(**kwargs):
+        return {
+            "category": "computer",
+            "invoice_total": Decimal("300.00"),
+            "amount": Decimal("120.00"),
+            "vendor": "Electronics Shop",
+            "date": date(2025, 4, 2),
+            "description": "Rechnung",
+            "confidence": 0.9,
+            "line_items": [
+                {
+                    "id": "1",
+                    "description": "Monitor",
+                    "amount": Decimal("120.00"),
+                    "category": "computer",
+                    "tax_relevant": True,
+                    "deductible_percent": Decimal("100.00"),
+                }
+            ],
+        }
+
+    monkeypatch.setattr("taxgpt.views.analyze_document", fake_analyze_document)
+
+    client.post(
+        f"/years/{tax_year_id}/documents",
+        data={
+            "analyze": "on",
+            "document": (io.BytesIO(b"invoice text"), "mixed-invoice.txt"),
+        },
+        content_type="multipart/form-data",
+        follow_redirects=True,
+    )
+
+    with app.app_context():
+        document_id = Document.query.one().id
+
+    for amount in ("120.00", "200.00"):
+        client.post(
+            f"/documents/{document_id}/apply",
+            data={
+                "line_item_id": ["1"],
+                "line_amount_1": amount,
+                "line_category_1": "computer",
+                "line_deductible_1": "100",
+            },
+            follow_redirects=True,
+        )
+
+    with app.app_context():
+        entries = TaxEntry.query.all()
+        assert len(entries) == 1
+        assert entries[0].amount == Decimal("200.00")

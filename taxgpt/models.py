@@ -91,6 +91,7 @@ class TaxEntry(db.Model):
     vendor: Mapped[str] = mapped_column(db.String(255), default="")
     description: Mapped[str] = mapped_column(db.Text, default="")
     document_id: Mapped[int | None] = mapped_column(ForeignKey("documents.id"))
+    document_line_id: Mapped[str] = mapped_column(db.String(80), default="", nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow, nullable=False)
 
     tax_year: Mapped[TaxYear] = relationship(back_populates="entries")

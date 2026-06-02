@@ -357,6 +357,8 @@ def upload_document(tax_year_id: int) -> Response:
 def analyse_existing_document(document_id: int) -> Response:
     document = _owned_document(document_id)
     _analyse_and_update_document(document)
+    if document.status == "analysed":
+        _sync_existing_document_entries(document)
     db.session.commit()
     flash("Dokument analysiert.", "success")
     return _dashboard_redirect(document.tax_year_id, "hochgeladene-dokumente")
@@ -366,18 +368,19 @@ def analyse_existing_document(document_id: int) -> Response:
 @login_required
 def apply_document_suggestion(document_id: int) -> Response:
     document = _owned_document(document_id)
-    if not document.suggested_category:
+
+    line_items = _document_line_items(document)
+    if not document.suggested_category and not any(item["category"] for item in line_items):
         flash("Es ist kein Kategorie-Vorschlag vorhanden.", "error")
         return _dashboard_redirect(document.tax_year_id, "hochgeladene-dokumente")
 
-    line_items = _document_line_items(document)
     if line_items:
         selected_ids = set(request.form.getlist("line_item_id"))
         if not selected_ids:
             flash("Bitte mindestens eine relevante Rechnungsposition auswählen.", "error")
             return _dashboard_redirect(document.tax_year_id, f"document-{document.id}")
 
-        created = 0
+        changed = 0
         for item in line_items:
             line_id = item["id"]
             if line_id not in selected_ids:
@@ -388,46 +391,38 @@ def apply_document_suggestion(document_id: int) -> Response:
             if amount <= 0:
                 continue
 
-            entry = TaxEntry(
-                tax_year_id=document.tax_year_id,
-                group=category.group,
-                category=category.code,
-                label=category.label,
+            entry = _find_document_line_entry(document, line_id)
+            if entry is None:
+                entry = TaxEntry(tax_year_id=document.tax_year_id, document_id=document.id, document_line_id=line_id)
+                db.session.add(entry)
+
+            _apply_document_line_to_entry(
+                entry,
+                document,
+                item,
+                category=category,
                 amount=amount,
                 deductible_percent=_decimal_value_or_none(
                     request.form.get(f"line_deductible_{line_id}") or item["deductible_percent"]
                 )
                 or item["deductible_percent"],
-                paid_on=document.suggested_date,
-                vendor=document.suggested_vendor,
-                description=item["description"],
-                document_id=document.id,
             )
-            db.session.add(entry)
-            created += 1
+            changed += 1
 
-        if created == 0:
+        if changed == 0:
             flash("Keine ausgewählte Rechnungsposition hatte einen verwertbaren Betrag.", "error")
             return _dashboard_redirect(document.tax_year_id, f"document-{document.id}")
 
         db.session.commit()
-        flash(f"{created} Rechnungsposition{'en' if created != 1 else ''} als Steuer-Eintrag übernommen.", "success")
+        flash(f"{changed} Rechnungsposition{'en' if changed != 1 else ''} als Steuer-Eintrag übernommen oder aktualisiert.", "success")
         return _dashboard_redirect(document.tax_year_id, "eintraege")
 
     category = get_category(document.suggested_category)
-    entry = TaxEntry(
-        tax_year_id=document.tax_year_id,
-        group=category.group,
-        category=category.code,
-        label=category.label,
-        amount=document.suggested_amount or Decimal("0.00"),
-        deductible_percent=Decimal(str(category.default_deductible_percent)),
-        paid_on=document.suggested_date,
-        vendor=document.suggested_vendor,
-        description=document.suggested_description,
-        document_id=document.id,
-    )
-    db.session.add(entry)
+    entry = _find_document_summary_entry(document)
+    if entry is None:
+        entry = TaxEntry(tax_year_id=document.tax_year_id, document_id=document.id, document_line_id="")
+        db.session.add(entry)
+    _apply_document_summary_to_entry(entry, document, category)
     db.session.commit()
     flash("Vorschlag als Steuer-Eintrag übernommen.", "success")
     return _dashboard_redirect(document.tax_year_id, "eintraege")
@@ -520,6 +515,100 @@ def _owned_document(document_id: int) -> Document:
 
 def _dashboard_redirect(tax_year_id: int, anchor: str) -> Response:
     return redirect(f"{url_for('web.year_dashboard', tax_year_id=tax_year_id)}#{anchor}")
+
+
+def _sync_existing_document_entries(document: Document) -> None:
+    if not document.entries:
+        return
+
+    line_items = _document_line_items(document)
+    if line_items:
+        for entry in document.entries:
+            item = _matching_line_item_for_entry(document, entry, line_items)
+            if item is None:
+                continue
+            category = get_category(item["category"] or document.suggested_category)
+            _apply_document_line_to_entry(
+                entry,
+                document,
+                item,
+                category=category,
+                amount=item["amount"],
+                deductible_percent=item["deductible_percent"],
+            )
+        return
+
+    entry = _find_document_summary_entry(document)
+    if entry is not None and document.suggested_category:
+        _apply_document_summary_to_entry(entry, document, get_category(document.suggested_category))
+
+
+def _matching_line_item_for_entry(document: Document, entry: TaxEntry, line_items: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if entry.document_line_id:
+        for item in line_items:
+            if item["id"] == entry.document_line_id:
+                return item
+
+    for item in line_items:
+        if item["description"] == entry.description:
+            entry.document_line_id = item["id"]
+            return item
+
+    if len(document.entries) == 1 and len(line_items) == 1:
+        entry.document_line_id = line_items[0]["id"]
+        return line_items[0]
+
+    return None
+
+
+def _find_document_line_entry(document: Document, line_id: str) -> TaxEntry | None:
+    for entry in document.entries:
+        if entry.document_line_id == line_id:
+            return entry
+    return None
+
+
+def _find_document_summary_entry(document: Document) -> TaxEntry | None:
+    blank_entries = [entry for entry in document.entries if not entry.document_line_id]
+    if blank_entries:
+        return blank_entries[0]
+    if len(document.entries) == 1:
+        return document.entries[0]
+    return None
+
+
+def _apply_document_line_to_entry(
+    entry: TaxEntry,
+    document: Document,
+    item: dict[str, Any],
+    *,
+    category: Any,
+    amount: Decimal,
+    deductible_percent: Decimal,
+) -> None:
+    entry.group = category.group
+    entry.category = category.code
+    entry.label = category.label
+    entry.amount = amount
+    entry.deductible_percent = deductible_percent
+    entry.paid_on = document.suggested_date
+    entry.vendor = document.suggested_vendor
+    entry.description = item["description"]
+    entry.document_id = document.id
+    entry.document_line_id = item["id"]
+
+
+def _apply_document_summary_to_entry(entry: TaxEntry, document: Document, category: Any) -> None:
+    entry.group = category.group
+    entry.category = category.code
+    entry.label = category.label
+    entry.amount = document.suggested_amount or Decimal("0.00")
+    entry.deductible_percent = Decimal(str(category.default_deductible_percent))
+    entry.paid_on = document.suggested_date
+    entry.vendor = document.suggested_vendor
+    entry.description = document.suggested_description
+    entry.document_id = document.id
+    entry.document_line_id = ""
 
 
 def _document_invoice_total(document: Document) -> Decimal | None:
